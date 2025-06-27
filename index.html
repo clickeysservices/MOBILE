@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>First-Person Survival Demo</title>
+<style>
+  body, html { margin: 0; overflow: hidden; height: 100%; background: #3a6b35; }
+  #instructions {
+    position: absolute;
+    top: 10px; left: 10px; color: white; font-family: monospace; background: rgba(0,0,0,0.5); padding: 10px;
+    max-width: 300px;
+  }
+  #crosshair {
+    position: absolute; top: 50%; left: 50%;
+    width: 20px; height: 20px;
+    margin-left: -10px; margin-top: -10px;
+    pointer-events: none;
+  }
+  #crosshair div {
+    position: absolute; background: white;
+  }
+  #crosshair div:nth-child(1), #crosshair div:nth-child(3) {
+    top: 9px; left: 0; width: 20px; height: 2px;
+  }
+  #crosshair div:nth-child(2), #crosshair div:nth-child(4) {
+    top: 0; left: 9px; width: 2px; height: 20px;
+  }
+  #pickupMessage {
+    position: absolute; bottom: 50px; left: 50%; transform: translateX(-50%);
+    font-family: monospace; color: white; background: rgba(0,0,0,0.7);
+    padding: 5px 10px; border-radius: 5px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+<div id="instructions">
+  Click to lock pointer.<br />
+  WASD = Move, Mouse = Look around<br />
+  E = Pick up sticks<br />
+  Sticks collected: <span id="stickCount">0</span>
+</div>
+<div id="crosshair">
+  <div></div><div></div><div></div><div></div>
+</div>
+<div id="pickupMessage">Picked up a stick!</div>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/controls/PointerLockControls.js"></script>
+<script>
+  let camera, scene, renderer, controls;
+  let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+  let velocity = new THREE.Vector3();
+  let direction = new THREE.Vector3();
+  let canPickUp = false;
+  let sticks = [];
+  let stickCount = 0;
+  const pickupMessage = document.getElementById('pickupMessage');
+  const stickCountElem = document.getElementById('stickCount');
+
+  init();
+  animate();
+
+  function init() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x3a6b35);
+
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 1, 1000);
+
+    // Ground
+    const floorGeometry = new THREE.PlaneGeometry(200, 200);
+    const floorMaterial = new THREE.MeshPhongMaterial({color: 0x556b2f});
+    const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+    floor.rotation.x = - Math.PI / 2;
+    scene.add(floor);
+
+    // Light
+    const light = new THREE.HemisphereLight(0xffffff, 0x444444);
+    light.position.set(0, 200, 0);
+    scene.add(light);
+    const dirLight = new THREE.DirectionalLight(0xffffff);
+    dirLight.position.set(0, 200, 100);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    // Add sticks
+    for(let i = 0; i < 10; i++) {
+      const stickGeo = new THREE.CylinderGeometry(0.05, 0.05, 1);
+      const stickMat = new THREE.MeshPhongMaterial({color: 0x8b4513});
+      const stick = new THREE.Mesh(stickGeo, stickMat);
+      stick.position.set(
+        (Math.random() - 0.5) * 100,
+        0.5,
+        (Math.random() - 0.5) * 100
+      );
+      scene.add(stick);
+      sticks.push(stick);
+    }
+
+    renderer = new THREE.WebGLRenderer({antialias: true});
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Controls
+    controls = new THREE.PointerLockControls(camera, document.body);
+
+    document.body.addEventListener('click', () => {
+      controls.lock();
+    });
+
+    controls.addEventListener('lock', () => {
+      document.getElementById('instructions').style.display = 'none';
+    });
+
+    controls.addEventListener('unlock', () => {
+      document.getElementById('instructions').style.display = '';
+    });
+
+    scene.add(controls.getObject());
+
+    const onKeyDown = function(event) {
+      switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW':
+          moveForward = true;
+          break;
+        case 'ArrowLeft':
+        case 'KeyA':
+          moveLeft = true;
+          break;
+        case 'ArrowDown':
+        case 'KeyS':
+          moveBackward = true;
+          break;
+        case 'ArrowRight':
+        case 'KeyD':
+          moveRight = true;
+          break;
+      }
+    };
+
+    const onKeyUp = function(event) {
+      switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW':
+          moveForward = false;
+          break;
+        case 'ArrowLeft':
+        case 'KeyA':
+          moveLeft = false;
+          break;
+        case 'ArrowDown':
+        case 'KeyS':
+          moveBackward = false;
+          break;
+        case 'ArrowRight':
+        case 'KeyD':
+          moveRight = false;
+          break;
+        case 'KeyE':
+          if (canPickUp) pickStick();
+          break;
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    window.addEventListener('resize', onWindowResize);
+
+    camera.position.y = 1.6;
+  }
+
+  function onWindowResize() {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  function pickStick() {
+    // Find closest stick within 2 units
+    let closestIndex = -1;
+    let closestDist = 9999;
+    const playerPos = controls.getObject().position;
+    sticks.forEach((stick, idx) => {
+      const dist = stick.position.distanceTo(playerPos);
+      if (dist < 2 && dist < closestDist) {
+        closestIndex = idx;
+        closestDist = dist;
+      }
+    });
+    if (closestIndex !== -1) {
+      scene.remove(sticks[closestIndex]);
+      sticks.splice(closestIndex, 1);
+      stickCount++;
+      stickCountElem.textContent = stickCount;
+      showPickupMessage();
+    }
+  }
+
+  function showPickupMessage() {
+    pickupMessage.style.display = 'block';
+    setTimeout(() => {
+      pickupMessage.style.display = 'none';
+    }, 1500);
+  }
+
+  let prevTime = performance.now();
+  const velocityVector = new THREE.Vector3();
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if (controls.isLocked === true) {
+      const time = performance.now();
+      const delta = (time - prevTime) / 1000;
+
+      velocity.x -= velocity.x * 10.0 * delta;
+      velocity.z -= velocity.z * 10.0 * delta;
+
+      direction.z = Number(moveForward) - Number(moveBackward);
+      direction.x = Number(moveRight) - Number(moveLeft);
+      direction.normalize();
+
+      if (moveForward || moveBackward) velocity.z -= direction.z * 400.0 * delta;
+      if (moveLeft || moveRight) velocity.x -= direction.x * 400.0 * delta;
+
+      controls.moveRight(- velocity.x * delta);
+      controls.moveForward(- velocity.z * delta);
+
+      prevTime = time;
+    }
+
+    renderer.render(scene, camera);
+  }
+</script>
+</body>
+</html>
